@@ -7,41 +7,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout SubGunProcessor::createLayou
 {
     using namespace juce;
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
-    int v = 1;
+    const int v = 1;
 
-    auto addF = [&] (const char* id, const char* name, float lo, float hi, float def, float skew, const char* unit)
+    for (int i = 0; i < sp::Count; ++i)
     {
-        NormalisableRange<float> r (lo, hi, 0.01f, skew);
-        p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { id, v }, name, r, def,
-                                                            AudioParameterFloatAttributes().withLabel (unit)));
-    };
-
-    // SUB
-    addF ("sub",      "Sub",           -60.0f,   6.0f,   0.0f, 1.0f, "dB");
-    addF ("diveAmt",  "Dive Amount",     0.0f,  36.0f,  10.0f, 1.0f, "st");
-    addF ("diveTime", "Dive Time",       1.0f, 500.0f,  57.0f, 0.5f, "ms");
-    addF ("swell",    "Swell",           0.0f, 300.0f,   0.0f, 0.5f, "ms");
-    addF ("subDrive", "Sub Drive",       0.0f,  36.0f,   7.1f, 1.0f, "dB");
-    addF ("hold",     "Hold",           10.0f, 4000.0f, 500.0f, 0.5f, "ms");
-    // TRANSIENT
-    addF ("trans",      "Transient",   -60.0f,   6.0f, -17.8f, 1.0f, "dB");
-    addF ("transDecay", "Trans Decay",   5.0f, 400.0f,  70.0f, 0.5f, "ms");
-    // BODY
-    addF ("body",      "Body",         -60.0f,   6.0f,  -7.2f, 1.0f, "dB");
-    addF ("bodyDecay", "Body Decay",     5.0f, 2000.0f, 120.0f, 0.4f, "ms");
-    addF ("bodyDrive", "Body Drive",     0.0f,  36.0f,  17.3f, 1.0f, "dB");
-    addF ("crunch",    "Crunch",         0.0f,   1.0f,   0.0f, 1.0f, "");
-    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "shape", v }, "Shape",
-                                                         StringArray { "exp", "lin", "log" }, 0));
-    // SPICE
-    addF ("spice",     "Spice",        -60.0f,   6.0f, -20.0f, 1.0f, "dB");
-    addF ("spicePos",  "Spice Pos",      0.0f, 600.0f,  40.0f, 0.6f, "ms");
-    addF ("spiceLen",  "Spice Length",  10.0f, 600.0f, 130.0f, 0.6f, "ms");
-    addF ("spiceTone", "Spice Tone",  200.0f, 8000.0f, 1800.0f, 0.4f, "Hz");
-    // MASTER
-    addF ("release",   "Release",        5.0f, 1000.0f,  80.0f, 0.5f, "ms");
-    addF ("high",      "High",         -12.0f,  12.0f,   3.6f, 1.0f, "dB");
-    addF ("vol",       "Volume",       -24.0f,   6.0f,   0.0f, 1.0f, "dB");
+        const auto& d = sp::defs()[(size_t) i];
+        if (i == sp::Shape)
+            p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { d.id, v }, d.name,
+                                                                 StringArray { "exp", "lin", "log" }, 0));
+        else
+            p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { d.id, v }, d.name,
+                                                                NormalisableRange<float> (d.lo, d.hi, 0.01f, d.skew), d.def,
+                                                                AudioParameterFloatAttributes().withLabel (d.unit)));
+    }
+    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "high", v }, "High",
+                 NormalisableRange<float> (-12.0f, 12.0f, 0.01f), 3.6f, AudioParameterFloatAttributes().withLabel ("dB")));
+    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "vol", v }, "Volume",
+                 NormalisableRange<float> (-24.0f, 6.0f, 0.01f), 0.0f, AudioParameterFloatAttributes().withLabel ("dB")));
     p.push_back (std::make_unique<AudioParameterInt> (ParameterID { "root", v }, "Root Note", 12, 60, 36));
 
     for (auto* s : kStems)
@@ -72,33 +54,19 @@ void SubGunProcessor::prepareToPlay (double sampleRate, int)
     lastHighDb = 1000.0f;
 }
 
-sg::Settings SubGunProcessor::readSettings()
+sp::ParamSet SubGunProcessor::readParams() const
 {
-    auto P = [this] (const juce::String& id) { return apvts.getRawParameterValue (id)->load(); };
-    auto lin = [] (float db) { return db <= -59.5f ? 0.0f : juce::Decibels::decibelsToGain (db); };
+    sp::ParamSet ps;
+    for (int i = 0; i < sp::Count; ++i)
+        ps.v[(size_t) i] = apvts.getRawParameterValue (sp::defs()[(size_t) i].id)->load();
+    return ps;
+}
 
-    bool anySolo = false;
-    for (auto* s : kStems) anySolo = anySolo || P (juce::String ("solo_") + s) > 0.5f;
-    auto audible = [&] (int i)
-    {
-        const bool m  = P (juce::String ("mute_") + kStems[i]) > 0.5f;
-        const bool so = P (juce::String ("solo_") + kStems[i]) > 0.5f;
-        return ! m && (! anySolo || so);
-    };
-
-    sg::Settings s;
-    s.subGain   = audible (0) ? lin (P ("sub"))   : 0.0f;
-    s.transGain = audible (1) ? lin (P ("trans")) : 0.0f;
-    s.bodyGain  = audible (2) ? lin (P ("body"))  : 0.0f;
-    s.spiceGain = audible (3) ? lin (P ("spice")) : 0.0f;
-    s.diveSemis = P ("diveAmt");   s.diveMs = P ("diveTime");
-    s.swellMs   = P ("swell");     s.subDriveDb = P ("subDrive");
-    s.holdMs    = P ("hold");      s.releaseMs = P ("release");
-    s.transDecayMs = P ("transDecay");
-    s.bodyDecayMs  = P ("bodyDecay");  s.bodyDriveDb = P ("bodyDrive");  s.crunch = P ("crunch");
-    s.spicePosMs = P ("spicePos");  s.spiceLenMs = P ("spiceLen");  s.spiceHz = P ("spiceTone");
-    s.shape = (int) P ("shape");
-    return s;
+void SubGunProcessor::applyParams (const sp::ParamSet& ps)
+{
+    for (int i = 0; i < sp::Count; ++i)
+        if (auto* rp = apvts.getParameter (sp::defs()[(size_t) i].id))
+            rp->setValueNotifyingHost (rp->convertTo0to1 (ps.v[(size_t) i]));
 }
 
 void SubGunProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -107,42 +75,57 @@ void SubGunProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     const int n = buffer.getNumSamples();
     buffer.clear();
 
-    // editor play button -> note events
+    auto P = [this] (const juce::String& id) { return apvts.getRawParameterValue (id)->load(); };
+    const int root = (int) P ("root");
+
+    // editor: play button (held) and variation audition (one-shot)
     const int gate = uiGate.load();
-    if (gate != 0 && prevGate == 0)
-    {
-        uiNote = (int) apvts.getRawParameterValue ("root")->load();
-        midi.addEvent (juce::MidiMessage::noteOn (1, uiNote, 0.9f), 0);
-    }
-    else if (gate == 0 && prevGate != 0)
-        midi.addEvent (juce::MidiMessage::noteOff (1, uiNote), 0);
+    if (gate != 0 && prevGate == 0)      { uiNote = root; midi.addEvent (juce::MidiMessage::noteOn (1, uiNote, 0.9f), 0); }
+    else if (gate == 0 && prevGate != 0) { midi.addEvent (juce::MidiMessage::noteOff (1, uiNote), 0); }
     prevGate = gate;
+    const int trig = uiTrigger.load();
+    if (trig != prevTrigger) { prevTrigger = trig; midi.addEvent (juce::MidiMessage::noteOn (1, root, 0.9f), 0); }
 
-    const sg::Settings settings = readSettings();
+    // settings, with mute / solo applied
+    sg::Settings s = sp::toSettings (readParams());
+    bool anySolo = false;
+    for (auto* st : kStems) anySolo = anySolo || P (juce::String ("solo_") + st) > 0.5f;
+    auto audible = [&] (int i)
+    {
+        const bool m  = P (juce::String ("mute_") + kStems[i]) > 0.5f;
+        const bool so = P (juce::String ("solo_") + kStems[i]) > 0.5f;
+        return ! m && (! anySolo || so);
+    };
+    if (! audible (0)) s.subGain = 0.0f;
+    if (! audible (1)) s.transGain = 0.0f;
+    if (! audible (2)) s.bodyGain = 0.0f;
+    if (! audible (3)) s.spiceGain = 0.0f;
+    const float pitchHz = P ("pitch");
+
     float* out = buffer.getWritePointer (0);
-
     int pos = 0;
     for (const auto meta : midi)
     {
         const int at = juce::jlimit (pos, n, meta.samplePosition);
-        if (at > pos) engine.render (out + pos, at - pos, settings);
+        if (at > pos) engine.render (out + pos, at - pos, s);
         pos = at;
         const auto msg = meta.getMessage();
-        if (msg.isNoteOn())                 engine.noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
-        else if (msg.isNoteOff())           engine.noteOff (msg.getNoteNumber());
+        if (msg.isNoteOn())
+            engine.noteOn (msg.getNoteNumber(), pitchHz * std::exp2 ((float) (msg.getNoteNumber() - root) / 12.0f), msg.getFloatVelocity());
+        else if (msg.isNoteOff())  engine.noteOff (msg.getNoteNumber());
         else if (msg.isAllNotesOff() || msg.isAllSoundOff()) engine.allOff();
     }
-    if (pos < n) engine.render (out + pos, n - pos, settings);
+    if (pos < n) engine.render (out + pos, n - pos, s);
 
     // master: high shelf -> volume -> soft ceiling
-    const float highDb = apvts.getRawParameterValue ("high")->load();
+    const float highDb = P ("high");
     if (highDb != lastHighDb)
     {
         lastHighDb = highDb;
         highShelf.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf (
             sampleRateHz, 4000.0, 0.7f, juce::Decibels::decibelsToGain (highDb));
     }
-    const float vol = juce::Decibels::decibelsToGain (apvts.getRawParameterValue ("vol")->load());
+    const float vol = juce::Decibels::decibelsToGain (P ("vol"));
     float peak = 0.0f;
     int w = vizPos.load();
     for (int i = 0; i < n; ++i)
@@ -164,22 +147,6 @@ void SubGunProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     const float prev = peakDb.load();
     peakDb.store (db > prev ? db : prev - 0.6f);
     playheadMs.store (engine.newestTimeMs());
-}
-
-void SubGunProcessor::setCurrentProgram (int index)
-{
-    const auto& presets = getPresets();
-    if (index < 0 || index >= (int) presets.size()) return;
-    currentProgram = index;
-
-    for (auto* param : getParameters())
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (param))
-            if (rp->paramID != "root" && rp->paramID != "vol")
-                rp->setValueNotifyingHost (rp->getDefaultValue());
-
-    for (const auto& pv : presets[(size_t) index].values)
-        if (auto* rp = apvts.getParameter (pv.id))
-            rp->setValueNotifyingHost (rp->convertTo0to1 (pv.value));
 }
 
 void SubGunProcessor::getStateInformation (juce::MemoryBlock& destData)

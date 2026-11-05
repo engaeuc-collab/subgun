@@ -60,11 +60,12 @@ public:
         spiceBP.setResonance (2.5f);
     }
 
-    void start (int midiNote, float velocity, uint32_t startOrder)
+    void start (int midiNote, float hz, float velocity, uint32_t startOrder)
     {
         note = midiNote;  order = startOrder;
         vel = 0.6f + 0.4f * velocity;
-        baseHz = (float) juce::MidiMessage::getMidiNoteInHertz (midiNote);
+        baseHz = hz;
+        rng.setSeed (1337);   // deterministic noise: the matcher and the plugin render identically
         active = true;  releasing = false;
         t = 0.0;  relSamples = 0.0;
         subPh = bodyPh1 = bodyPh2 = clickPh = spicePh = 0.0;
@@ -172,7 +173,7 @@ class Engine
 public:
     void prepare (double sr) { for (auto& v : voices) { v.prepare (sr); v.active = false; } }
 
-    void noteOn (int note, float vel)
+    void noteOn (int note, float hz, float vel)
     {
         Voice* pick = nullptr;
         for (auto& v : voices) if (! v.active) { pick = &v; break; }
@@ -181,7 +182,7 @@ public:
             pick = &voices[0];
             for (auto& v : voices) if (v.order < pick->order) pick = &v;
         }
-        pick->start (note, vel, ++counter);
+        pick->start (note, hz, vel, ++counter);
     }
 
     void noteOff (int note)

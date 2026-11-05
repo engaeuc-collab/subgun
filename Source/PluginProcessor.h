@@ -1,7 +1,8 @@
 #pragma once
 #include "Common.h"
 #include "Synth.h"
-#include "Presets.h"
+#include "Params.h"
+#include "Matcher.h"
 
 class SubGunProcessor : public juce::AudioProcessor
 {
@@ -23,35 +24,41 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.5; }
 
-    int getNumPrograms() override { return (int) getPresets().size(); }
-    int getCurrentProgram() override { return currentProgram; }
-    void setCurrentProgram (int index) override;
-    const juce::String getProgramName (int index) override { return getPresets()[(size_t) index].name; }
+    // No factory presets: sounds come from dropped samples. Hosts still expect one program.
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return "Init"; }
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    juce::AudioProcessorValueTreeState apvts;
+    // sound <-> parameters (message thread)
+    sp::ParamSet readParams() const;
+    void applyParams (const sp::ParamSet& ps);
+    void trigger() { uiTrigger.fetch_add (1); }
 
-    // ---- shared with the editor (lock-free)
+    juce::AudioProcessorValueTreeState apvts;
+    Matcher matcher;
+
+    // shared with the editor (lock-free)
     static constexpr int vizSize = 1 << 15;
     static constexpr int vizMask = vizSize - 1;
     std::array<float, vizSize> vizBuf {};
     std::atomic<int>   vizPos { 0 };
     std::atomic<float> peakDb { -100.0f };
     std::atomic<float> playheadMs { -1.0f };
-    std::atomic<int>   uiGate { 0 };           // editor play button
+    std::atomic<int>   uiGate { 0 };
+    std::atomic<int>   uiTrigger { 0 };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    sg::Settings readSettings();
 
     sg::Engine engine;
     juce::dsp::IIR::Filter<float> highShelf;
     float lastHighDb = 1000.0f;
-    int currentProgram = 0;
-    int prevGate = 0, uiNote = 36;
+    int prevGate = 0, prevTrigger = 0, uiNote = 36;
     double sampleRateHz = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SubGunProcessor)
