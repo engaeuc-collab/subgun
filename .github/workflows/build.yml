@@ -1,0 +1,36 @@
+name: Build VST3
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            extra: ""
+          - os: macos-latest
+            name: macOS
+            extra: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.extra }}
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target SubGun_VST3 --parallel 4
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubGun-${{ matrix.name }}-VST3
+          path: build/SubGun_artefacts/Release/VST3/
+          if-no-files-found: error
