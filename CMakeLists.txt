@@ -25,15 +25,16 @@ juce_add_plugin(SubGun
     VST3_CATEGORIES Instrument Synth
     PRODUCT_NAME "SubGun")
 
-target_sources(SubGun PRIVATE
-    Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+# every .cpp in Source/ is built automatically, so new files can't be forgotten
+file(GLOB SUBGUN_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/Source/*.cpp)
+target_sources(SubGun PRIVATE ${SUBGUN_SOURCES})
 
 target_compile_definitions(SubGun PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0)
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_USE_MP3AUDIOFORMAT=1)
 
 target_link_libraries(SubGun
     PRIVATE
